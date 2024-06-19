@@ -108,15 +108,7 @@ func (r *linearReader) nextPart() (io.ReadCloser, error) {
 	location := r.parts[r.ranges[r.pos].PartNo].Location
 	startByte := r.ranges[r.pos].Start
 	endByte := r.ranges[r.pos].End
-	rd, err := newTGReader(r.ctx, r.client, location, startByte, endByte)
-	if err != nil {
-		return nil, err
-	}
-	if r.config.Stream.BufferReader {
-		return NewAsyncReader(r.ctx, rd, r.config.Stream.Buffers)
-
-	}
-	return rd, nil
+	return newTGReader(r.ctx, r.client, location, startByte, endByte, 1)
 
 }
 

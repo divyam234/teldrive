@@ -105,15 +105,7 @@ func (r *decrpytedReader) nextPart() (io.ReadCloser, error) {
 			if underlyingLimit >= 0 {
 				end = min(r.parts[r.ranges[r.pos].PartNo].Size-1, underlyingOffset+underlyingLimit-1)
 			}
-			rd, err := newTGReader(r.ctx, r.client, location, underlyingOffset, end)
-			if err != nil {
-				return nil, err
-			}
-			if r.config.Stream.BufferReader {
-				return NewAsyncReader(r.ctx, rd, r.config.Stream.Buffers)
-
-			}
-			return rd, nil
+			return newTGReader(r.ctx, r.client, location, underlyingOffset, end, 16)
 
 		}, start, end-start+1)
 

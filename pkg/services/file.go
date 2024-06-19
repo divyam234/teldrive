@@ -669,7 +669,10 @@ func (fs *FileService) GetFileStream(c *gin.Context) {
 			return
 		}
 
-		io.CopyN(w, lr, contentLength)
+		_, err = io.CopyN(w, lr, contentLength)
+		if err != nil {
+			lr.Close()
+		}
 	}
 }
 func setOrderFilter(query *gorm.DB, fquery *schemas.FileQuery) *gorm.DB {
