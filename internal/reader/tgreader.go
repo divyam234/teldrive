@@ -1,25 +1,16 @@
 package reader
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"sync"
-	"time"
 
 	"github.com/divyam234/teldrive/internal/cache"
 	"github.com/divyam234/teldrive/internal/tgc"
 	"github.com/gotd/td/tg"
-	"github.com/rclone/rclone/lib/pool"
 	"golang.org/x/sync/errgroup"
-)
-
-const (
-	BufferSize           = 1024 * 1024
-	bufferCacheSize      = 64
-	bufferCacheFlushTime = 5 * time.Second
 )
 
 var ErrorStreamAbandoned = errors.New("stream abandoned")
@@ -74,7 +65,7 @@ func newTGReader(
 	r := &tgReader{
 		ctx:         ctx,
 		limit:       end - start + 1,
-		bufferChan:  make(chan *buffer, 64),
+		bufferChan:  make(chan *buffer, 16),
 		concurrency: concurrency,
 		done:        make(chan struct{}),
 		leftCut:     start - offset,
@@ -95,37 +86,10 @@ func newTGReader(
 	return r, nil
 }
 
-var bufferPool *pool.Pool
-
-var bufferPoolOnce sync.Once
-
-func (r *tgReader) putBuffer(b *buffer) {
-	bufferPool.Put(b.buf)
-	b.buf = nil
-}
-
-func (r *tgReader) getBuffer() *buffer {
-	bufferPoolOnce.Do(func() {
-		bufferPool = pool.New(bufferCacheFlushTime, BufferSize, bufferCacheSize, false)
-	})
-	return &buffer{
-		buf: bufferPool.Get(),
-	}
-}
-
 func (r *tgReader) Close() error {
 	close(r.done)
 	r.wg.Wait()
 	close(r.bufferChan)
-
-	if r.cur != nil {
-		r.putBuffer(r.cur)
-		r.cur = nil
-	}
-	for b := range r.bufferChan {
-		r.putBuffer(b)
-	}
-	bufferPool.Flush()
 	return nil
 }
 
@@ -139,7 +103,6 @@ func (r *tgReader) Read(p []byte) (n int, err error) {
 
 	if r.cur.isEmpty() {
 		if r.cur != nil {
-			r.putBuffer(r.cur)
 			r.cur = nil
 		}
 		select {
@@ -222,8 +185,41 @@ func (r *tgReader) chunk(ctx context.Context, offset int64, limit int64) ([]byte
 }
 
 func (r *tgReader) fillBuffer() error {
-	defer r.wg.Done()
+
 	var mapMu sync.Mutex
+
+	bufferMap := make(map[int]*buffer)
+
+	defer func() {
+		r.wg.Done()
+		for i := range bufferMap {
+			delete(bufferMap, i)
+		}
+	}()
+
+	cb := func(ctx context.Context, i int) func() error {
+		return func() error {
+
+			chunk, err := r.chunk(ctx, r.offset+(int64(i)*r.chunkSize), r.chunkSize)
+			if err != nil {
+				return err
+			}
+			if r.totalParts == 1 {
+				chunk = chunk[r.leftCut:r.rightCut]
+			} else if r.currentPart+i+1 == 1 {
+				chunk = chunk[r.leftCut:]
+			} else if r.currentPart+i+1 == r.totalParts {
+				chunk = chunk[:r.rightCut]
+			}
+
+			buf := &buffer{buf: chunk}
+			mapMu.Lock()
+			bufferMap[i] = buf
+			mapMu.Unlock()
+			return nil
+		}
+	}
+
 loop:
 	for {
 		select {
@@ -232,39 +228,19 @@ loop:
 		case <-r.ctx.Done():
 			break loop
 		default:
-
 			g, ctx := errgroup.WithContext(r.ctx)
 
 			threads := min(r.concurrency, int(r.limit/r.chunkSize)+1)
 
-			bufferMap := make(map[int]*buffer)
+			g.SetLimit(8)
 
 			for i := range threads {
-				g.Go(func() error {
-					chunk, err := r.chunk(ctx, r.offset+(int64(i)*r.chunkSize), r.chunkSize)
-					if err != nil {
-						return err
-					}
-					if r.totalParts == 1 {
-						chunk = chunk[r.leftCut:r.rightCut]
-					} else if r.currentPart+i+1 == 1 {
-						chunk = chunk[r.leftCut:]
-					} else if r.currentPart+i+1 == r.totalParts {
-						chunk = chunk[:r.rightCut]
-					}
-
-					mapMu.Lock()
-					buf := r.getBuffer()
-					buf.read(bytes.NewReader(chunk))
-					bufferMap[i] = buf
-					mapMu.Unlock()
-					return nil
-				})
+				g.Go(cb(ctx, i))
 			}
+
 			if err := g.Wait(); err != nil {
 				return err
 			}
-
 			for i := range threads {
 				select {
 				case <-r.done:
@@ -276,6 +252,9 @@ loop:
 			}
 			r.currentPart += threads
 			r.offset += r.chunkSize * int64(threads)
+			for i := range threads {
+				delete(bufferMap, i)
+			}
 		}
 	}
 	return nil
@@ -295,23 +274,6 @@ func (b *buffer) isEmpty() bool {
 		return true
 	}
 	return false
-}
-
-func (b *buffer) readFill(r io.Reader, buf []byte) (n int, err error) {
-	var nn int
-	for n < len(buf) && err == nil {
-		nn, err = r.Read(buf[n:])
-		n += nn
-	}
-	return n, err
-}
-
-func (b *buffer) read(rd io.Reader) error {
-	var n int
-	n, b.err = b.readFill(rd, b.buf)
-	b.buf = b.buf[0:n]
-	b.offset = 0
-	return b.err
 }
 
 func (b *buffer) buffer() []byte {
