@@ -89,7 +89,7 @@ func (r *decrpytedReader) Close() (err error) {
 
 func (r *decrpytedReader) nextPart() (io.ReadCloser, error) {
 
-	location := r.parts[r.ranges[r.pos].PartNo].Location
+	//location := r.parts[r.ranges[r.pos].PartNo].Location
 	start := r.ranges[r.pos].Start
 	end := r.ranges[r.pos].End
 	salt := r.parts[r.ranges[r.pos].PartNo].Salt
@@ -100,12 +100,13 @@ func (r *decrpytedReader) nextPart() (io.ReadCloser, error) {
 			underlyingOffset,
 			underlyingLimit int64) (io.ReadCloser, error) {
 
-			var end int64
+			//var end int64
 
 			if underlyingLimit >= 0 {
 				end = min(r.parts[r.ranges[r.pos].PartNo].Size-1, underlyingOffset+underlyingLimit-1)
 			}
-			return newTGReader(r.ctx, r.client, location, underlyingOffset, end, 16)
+			return nil, nil
+			//return newTGReader(r.ctx, r.client, location, underlyingOffset, end, 16)
 
 		}, start, end-start+1)
 

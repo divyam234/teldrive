@@ -230,12 +230,11 @@ func getParts(ctx context.Context, client *telegram.Client, file *schemas.FileOu
 		item := message.(*tg.Message)
 		media := item.Media.(*tg.MessageMediaDocument)
 		document := media.Document.(*tg.Document)
-		location := document.AsInputDocumentFileLocation()
 
 		part := types.Part{
-			Location: location,
-			Size:     document.Size,
-			Salt:     file.Parts[i].Salt,
+			ID:   file.Parts[i].ID,
+			Size: document.Size,
+			Salt: file.Parts[i].Salt,
 		}
 		if file.Encrypted {
 			part.DecryptedSize, _ = crypt.DecryptedSize(document.Size)

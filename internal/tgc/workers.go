@@ -2,11 +2,11 @@ package tgc
 
 import (
 	"context"
+	"strings"
 	"sync"
 
 	"github.com/divyam234/teldrive/internal/config"
 	"github.com/divyam234/teldrive/internal/kv"
-	"github.com/divyam234/teldrive/internal/pool"
 	"github.com/gotd/td/telegram"
 )
 
@@ -42,9 +42,9 @@ func NewUploadWorker() *UploadWorker {
 
 type Client struct {
 	Tg     *telegram.Client
-	Pool   pool.Pool
 	Stop   StopFunc
 	Status string
+	UserId string
 }
 
 type StreamWorker struct {
@@ -69,10 +69,7 @@ func (w *StreamWorker) Set(bots []string, channelId int64) {
 		for _, token := range bots {
 			middlewares := Middlewares(w.cnf, 5)
 			client, _ := BotClient(w.ctx, w.kv, w.cnf, token, middlewares...)
-			c := &Client{Tg: client, Status: "idle"}
-			if w.cnf.Stream.UsePooling {
-				c.Pool = pool.NewPool(client, int64(w.cnf.PoolSize), middlewares...)
-			}
+			c := &Client{Tg: client, Status: "idle", UserId: strings.Split(token, ":")[0]}
 			w.clients[channelId] = append(w.clients[channelId], c)
 		}
 		w.currIdx[channelId] = 0
@@ -108,9 +105,6 @@ func (w *StreamWorker) UserWorker(session string, userId int64) (*Client, error)
 		middlewares := Middlewares(w.cnf, 5)
 		client, _ := AuthClient(w.ctx, w.cnf, session, middlewares...)
 		c := &Client{Tg: client, Status: "idle"}
-		if w.cnf.Stream.UsePooling {
-			c.Pool = pool.NewPool(client, int64(w.cnf.PoolSize), middlewares...)
-		}
 		w.clients[userId] = append(w.clients[userId], c)
 	}
 	nextClient := w.clients[userId][0]

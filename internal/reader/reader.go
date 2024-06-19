@@ -5,8 +5,8 @@ import (
 	"io"
 
 	"github.com/divyam234/teldrive/internal/config"
+	"github.com/divyam234/teldrive/internal/tgc"
 	"github.com/divyam234/teldrive/pkg/types"
-	"github.com/gotd/td/tg"
 )
 
 func calculatePartByteRanges(startByte, endByte, partSize int64) []types.Range {
@@ -37,31 +37,37 @@ func calculatePartByteRanges(startByte, endByte, partSize int64) []types.Range {
 }
 
 type linearReader struct {
-	ctx    context.Context
-	parts  []types.Part
-	ranges []types.Range
-	pos    int
-	client *tg.Client
-	reader io.ReadCloser
-	limit  int64
-	err    error
-	config *config.TGConfig
+	ctx       context.Context
+	parts     []types.Part
+	ranges    []types.Range
+	pos       int
+	reader    io.ReadCloser
+	limit     int64
+	err       error
+	config    *config.TGConfig
+	channelId int64
+	worker    *tgc.StreamWorker
+	fileId    string
 }
 
 func NewLinearReader(ctx context.Context,
-	client *tg.Client,
+	fileId string,
 	parts []types.Part,
 	start, end int64,
+	channelId int64,
 	config *config.TGConfig,
+	worker *tgc.StreamWorker,
 ) (reader io.ReadCloser, err error) {
 
 	r := &linearReader{
-		ctx:    ctx,
-		parts:  parts,
-		client: client,
-		limit:  end - start + 1,
-		ranges: calculatePartByteRanges(start, end, parts[0].Size),
-		config: config,
+		ctx:       ctx,
+		parts:     parts,
+		limit:     end - start + 1,
+		ranges:    calculatePartByteRanges(start, end, parts[0].Size),
+		config:    config,
+		worker:    worker,
+		channelId: channelId,
+		fileId:    fileId,
 	}
 
 	r.reader, err = r.nextPart()
@@ -92,6 +98,9 @@ func (r *linearReader) Read(p []byte) (n int, err error) {
 	if err == io.EOF {
 		if r.limit > 0 {
 			err = nil
+			if r.reader != nil {
+				r.reader.Close()
+			}
 		}
 		r.pos++
 		if r.pos < len(r.ranges) {
@@ -105,10 +114,10 @@ func (r *linearReader) Read(p []byte) (n int, err error) {
 
 func (r *linearReader) nextPart() (io.ReadCloser, error) {
 
-	location := r.parts[r.ranges[r.pos].PartNo].Location
 	startByte := r.ranges[r.pos].Start
 	endByte := r.ranges[r.pos].End
-	return newTGReader(r.ctx, r.client, location, startByte, endByte, 1)
+	return newTGReader(r.ctx, r.fileId, r.parts[r.ranges[r.pos].PartNo].ID,
+		startByte, endByte, r.config.BgBotsLimit, r.channelId, r.worker)
 
 }
 

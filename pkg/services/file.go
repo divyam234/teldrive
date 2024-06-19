@@ -621,22 +621,16 @@ func (fs *FileService) GetFileStream(c *gin.Context) {
 			"end", end, "fileSize", file.Size)
 
 	} else {
-		var index int
 
 		limit := min(len(tokens), fs.cnf.BgBotsLimit)
 
 		fs.worker.Set(tokens[:limit], file.ChannelID)
-
-		client, index, err = fs.worker.Next(file.ChannelID)
-
+		client, _, err = fs.worker.Next(file.ChannelID)
 		if err != nil {
 			logger.Error("file stream", zap.Error(err))
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		channelUser = strings.Split(tokens[index], ":")[0]
-		logger.Debugw("requesting file", "name", file.Name, "bot", channelUser, "botNo", index, "start", start,
-			"end", end, "fileSize", file.Size)
 	}
 
 	if r.Method != "HEAD" {
@@ -647,17 +641,7 @@ func (fs *FileService) GetFileStream(c *gin.Context) {
 			return
 		}
 
-		tgClient := client.Tg.API()
-
-		if fs.cnf.Stream.UsePooling {
-			tgClient = client.Pool.Default(c)
-		}
-
-		if file.Encrypted {
-			lr, err = reader.NewDecryptedReader(c, tgClient, parts, start, end, fs.cnf)
-		} else {
-			lr, err = reader.NewLinearReader(c, tgClient, parts, start, end, fs.cnf)
-		}
+		lr, err = reader.NewLinearReader(c, file.Id, parts, start, end, file.ChannelID, fs.cnf, fs.worker)
 
 		if err != nil {
 			logger.Error("file stream", err)

@@ -42,12 +42,6 @@ type TGConfig struct {
 		MaxRetries    int
 		Retention     time.Duration
 	}
-	Stream struct {
-		BufferReader bool
-		Buffers      int
-		UseMmap      bool
-		UsePooling   bool
-	}
 }
 
 type LoggingConfig struct {
