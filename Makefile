@@ -11,18 +11,15 @@ FRONTEND_ASSET := https://github.com/divyam234/teldrive-ui/releases/download/v1/
 GIT_TAG := $(shell git describe --tags --abbrev=0)
 GIT_COMMIT := $(shell git rev-parse --short HEAD)
 GIT_LINK := $(shell git remote get-url origin)
-ENV_FILE := $(FRONTEND_DIR)/.env
 MODULE_PATH := $(shell go list -m)
-BUILD_DATE := $(shell $(BUILD_DATE))
-
 GOOS ?= $(shell go env GOOS)
 GOARCH ?= $(shell go env GOARCH)
+VERSION:= $(GIT_TAG)
+BINARY_EXTENSION :=
 
 .PHONY: all build run clean frontend backend run sync-ui retag patch-version minor-version
  
 all: build
-
-
 
 frontend:
 	@echo "Extract UI"
@@ -40,10 +37,17 @@ else
 	rm -rf teldrive-ui.zip
 endif
 
+ifeq (${ENV},dev)
+    VERSION := dev
+endif
+
+ifeq ($(OS),Windows_NT)
+    BINARY_EXTENSION := .exe
+endif
 
 backend:
 	@echo "Building backend for $(GOOS)/$(GOARCH)..."
-	go build -trimpath -ldflags "-s -w -X $(MODULE_PATH)/internal/config.Version=$(GIT_TAG) -extldflags=-static" -o $(BUILD_DIR)/$(APP_NAME)$(BINARY_EXTENSION)
+	go build -trimpath -ldflags "-s -w -X $(MODULE_PATH)/internal/config.Version=$(VERSION) -extldflags=-static" -o $(BUILD_DIR)/$(APP_NAME)$(BINARY_EXTENSION)
 
 build: frontend backend
 	@echo "Building complete."
