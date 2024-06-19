@@ -37,10 +37,6 @@ else
 	rm -rf teldrive-ui.zip
 endif
 
-ifeq (${ENV},dev)
-    VERSION := dev
-endif
-
 ifeq ($(OS),Windows_NT)
     BINARY_EXTENSION := .exe
 endif
