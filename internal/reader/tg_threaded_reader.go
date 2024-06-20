@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/divyam234/teldrive/internal/cache"
 	"github.com/divyam234/teldrive/internal/tgc"
@@ -99,8 +100,6 @@ func (r *threadedTgReader) Read(p []byte) (n int, err error) {
 			r.cur = nil
 		}
 		select {
-		case <-r.done:
-			return 0, ErrorStreamAbandoned
 		case cur, ok := <-r.bufferChan:
 			if !ok {
 				return 0, ErrorStreamAbandoned
@@ -108,6 +107,8 @@ func (r *threadedTgReader) Read(p []byte) (n int, err error) {
 			r.cur = cur
 		case <-r.ctx.Done():
 			return 0, r.ctx.Err()
+		case <-time.After(30 * time.Second):
+			return 0, ErrorStreamAbandoned
 		}
 	}
 
@@ -211,23 +212,26 @@ func (r *threadedTgReader) fillBuffer() error {
 
 loop:
 	for {
-		select {
-		case <-r.done:
-			break loop
-		case <-r.ctx.Done():
-			break loop
-		default:
-			g, ctx := errgroup.WithContext(r.ctx)
 
-			g.SetLimit(r.concurrency)
+		g, ctx := errgroup.WithContext(r.ctx)
 
-			for i := range r.concurrency {
-				if r.currentPart+i+1 <= r.totalParts {
-					g.Go(cb(ctx, i))
-				}
+		g.SetLimit(r.concurrency)
+
+		for i := range r.concurrency {
+			if r.currentPart+i+1 <= r.totalParts {
+				g.Go(cb(ctx, i))
 			}
+		}
 
-			if err := g.Wait(); err != nil {
+		done := make(chan error, 1)
+
+		go func() {
+			done <- g.Wait()
+		}()
+
+		select {
+		case err := <-done:
+			if err != nil {
 				close(r.bufferChan)
 				r.closed = true
 				return err
@@ -251,7 +255,14 @@ loop:
 			if r.currentPart >= r.totalParts {
 				break loop
 			}
+		case <-time.After(30 * time.Second):
+			close(r.bufferChan)
+			r.closed = true
+			return errors.New("timeout")
+		case <-r.ctx.Done():
+			return r.ctx.Err()
 		}
+
 	}
 	return nil
 }
