@@ -222,7 +222,7 @@ loop:
 			}
 
 			if err := g.Wait(); err != nil {
-				if len(r.bufferChan) == 0 {
+				if r.currentPart == 0 {
 					close(r.bufferChan)
 					break loop
 				}
