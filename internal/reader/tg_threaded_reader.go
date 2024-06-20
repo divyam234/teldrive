@@ -213,11 +213,9 @@ loop:
 		default:
 			g, ctx := errgroup.WithContext(r.ctx)
 
-			threads := r.concurrency
+			g.SetLimit(r.concurrency)
 
-			g.SetLimit(8)
-
-			for i := range threads {
+			for i := range r.concurrency {
 				if r.currentPart+i+1 <= r.totalParts {
 					g.Go(cb(ctx, i))
 				}
@@ -226,7 +224,7 @@ loop:
 			if err := g.Wait(); err != nil {
 				return err
 			}
-			for i := range threads {
+			for i := range r.concurrency {
 				if r.currentPart+i+1 <= r.totalParts {
 					select {
 					case <-r.done:
@@ -237,8 +235,8 @@ loop:
 					}
 				}
 			}
-			r.currentPart += threads
-			r.offset += r.chunkSize * int64(threads)
+			r.currentPart += r.concurrency
+			r.offset += r.chunkSize * int64(r.concurrency)
 			for i := range bufferMap {
 				delete(bufferMap, i)
 			}
