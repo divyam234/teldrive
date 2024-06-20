@@ -183,28 +183,6 @@ func (r *threadedTgReader) fillBuffer() error {
 		}
 	}()
 
-	cb := func(ctx context.Context, i int) func() error {
-		return func() error {
-			chunk, err := r.chunk(ctx, r.offset+(int64(i)*r.chunkSize), r.chunkSize)
-			if err != nil {
-				return err
-			}
-			if r.totalParts == 1 {
-				chunk = chunk[r.leftCut:r.rightCut]
-			} else if r.currentPart+i+1 == 1 {
-				chunk = chunk[r.leftCut:]
-			} else if r.currentPart+i+1 == r.totalParts {
-				chunk = chunk[:r.rightCut]
-			}
-
-			buf := &buffer{buf: chunk}
-			mapMu.Lock()
-			bufferMap[i] = buf
-			mapMu.Unlock()
-			return nil
-		}
-	}
-
 loop:
 	for {
 		select {
@@ -220,7 +198,28 @@ loop:
 			g.SetLimit(concurrency)
 
 			for i := range concurrency {
-				g.Go(cb(ctx, i))
+				g.Go(func() error {
+					chunk, err := r.chunk(ctx, r.offset+(int64(i)*r.chunkSize), r.chunkSize)
+					if err != nil {
+						return err
+					}
+					if r.totalParts == 1 {
+						chunk = chunk[r.leftCut:r.rightCut]
+					} else if r.currentPart+i+1 == 1 {
+						chunk = chunk[r.leftCut:]
+					} else if r.currentPart+i+1 == r.totalParts {
+						chunk = chunk[:r.rightCut]
+					} else if len(chunk) == 0 {
+						<-r.done
+						return nil
+					}
+
+					buf := &buffer{buf: chunk}
+					mapMu.Lock()
+					bufferMap[i] = buf
+					mapMu.Unlock()
+					return nil
+				})
 			}
 
 			if err := g.Wait(); err != nil {
