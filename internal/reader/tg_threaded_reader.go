@@ -81,10 +81,6 @@ func newThreadedTGReader(
 func (r *threadedTgReader) Close() error {
 	close(r.done)
 	r.wg.Wait()
-	if !r.closed {
-		close(r.bufferChan)
-	}
-
 	return nil
 }
 
@@ -178,6 +174,9 @@ func (r *threadedTgReader) fillBuffer() error {
 
 	defer func() {
 		r.wg.Done()
+		if !r.closed {
+			close(r.bufferChan)
+		}
 		for i := range bufferMap {
 			delete(bufferMap, i)
 		}
@@ -201,6 +200,7 @@ loop:
 				g.Go(func() error {
 					chunk, err := r.chunk(ctx, r.offset+(int64(i)*r.chunkSize), r.chunkSize)
 					if err != nil {
+						<-r.done
 						return err
 					}
 					if r.totalParts == 1 {

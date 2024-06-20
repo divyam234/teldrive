@@ -89,7 +89,6 @@ func (r *linearReader) Read(p []byte) (n int, err error) {
 	if r.err != nil {
 		return 0, r.err
 	}
-
 	if r.limit <= 0 {
 		return 0, io.EOF
 	}
