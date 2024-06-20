@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/divyam234/teldrive/internal/auth"
 	"github.com/divyam234/teldrive/internal/cache"
 	"github.com/divyam234/teldrive/internal/config"
 	"github.com/divyam234/teldrive/internal/kv"
@@ -41,7 +42,7 @@ func NewUserService(db *gorm.DB, cnf *config.Config, kv kv.KV) *UserService {
 	return &UserService{db: db, cnf: cnf, kv: kv}
 }
 func (us *UserService) GetProfilePhoto(c *gin.Context) {
-	_, session := GetUserAuth(c)
+	_, session := auth.GetUser(c)
 
 	client, err := tgc.AuthClient(c, &us.cnf.TG, session)
 
@@ -64,7 +65,7 @@ func (us *UserService) GetProfilePhoto(c *gin.Context) {
 			return errors.New("profile not found")
 		}
 		location := &tg.InputPeerPhotoFileLocation{Big: false, Peer: peer, PhotoID: photo.PhotoID}
-		buff, err := iterContent(c, client, location)
+		buff, err := tgc.GetMediaContent(c, client.API(), location)
 		if err != nil {
 			return err
 		}
@@ -83,13 +84,13 @@ func (us *UserService) GetProfilePhoto(c *gin.Context) {
 }
 
 func (us *UserService) GetStats(c *gin.Context) (*schemas.AccountStats, *types.AppError) {
-	userID, _ := GetUserAuth(c)
+	userID, _ := auth.GetUser(c)
 	var (
 		channelId int64
 		err       error
 	)
 
-	channelId, _ = GetDefaultChannel(c, us.db, userID)
+	channelId, _ = getDefaultChannel(c, us.db, userID)
 
 	tokens, err := getBotsToken(c, us.db, userID, channelId)
 
@@ -103,7 +104,7 @@ func (us *UserService) UpdateChannel(c *gin.Context) (*schemas.Message, *types.A
 
 	cache := cache.FromContext(c)
 
-	userId, _ := GetUserAuth(c)
+	userId, _ := auth.GetUser(c)
 
 	var payload schemas.Channel
 
@@ -130,7 +131,7 @@ func (us *UserService) UpdateChannel(c *gin.Context) (*schemas.Message, *types.A
 }
 
 func (us *UserService) ListSessions(c *gin.Context) ([]schemas.SessionOut, *types.AppError) {
-	userId, userSession := GetUserAuth(c)
+	userId, userSession := auth.GetUser(c)
 
 	client, _ := tgc.AuthClient(c, &us.cnf.TG, userSession)
 
@@ -185,7 +186,7 @@ func (us *UserService) ListSessions(c *gin.Context) ([]schemas.SessionOut, *type
 
 func (us *UserService) RemoveSession(c *gin.Context) (*schemas.Message, *types.AppError) {
 
-	userId, _ := GetUserAuth(c)
+	userId, _ := auth.GetUser(c)
 
 	session := &models.Session{}
 
@@ -209,7 +210,7 @@ func (us *UserService) RemoveSession(c *gin.Context) (*schemas.Message, *types.A
 }
 
 func (us *UserService) ListChannels(c *gin.Context) (interface{}, *types.AppError) {
-	_, session := GetUserAuth(c)
+	_, session := auth.GetUser(c)
 	client, _ := tgc.AuthClient(c, &us.cnf.TG, session)
 
 	channels := make(map[int64]*schemas.Channel)
@@ -236,7 +237,7 @@ func (us *UserService) ListChannels(c *gin.Context) (interface{}, *types.AppErro
 }
 
 func (us *UserService) AddBots(c *gin.Context) (*schemas.Message, *types.AppError) {
-	userId, session := GetUserAuth(c)
+	userId, session := auth.GetUser(c)
 	client, _ := tgc.AuthClient(c, &us.cnf.TG, session)
 
 	var botsTokens []string
@@ -249,7 +250,7 @@ func (us *UserService) AddBots(c *gin.Context) (*schemas.Message, *types.AppErro
 		return &schemas.Message{Message: "no bots to add"}, nil
 	}
 
-	channelId, err := GetDefaultChannel(c, us.db, userId)
+	channelId, err := getDefaultChannel(c, us.db, userId)
 
 	if err != nil {
 		return nil, &types.AppError{Error: err, Code: http.StatusInternalServerError}
@@ -263,9 +264,9 @@ func (us *UserService) RemoveBots(c *gin.Context) (*schemas.Message, *types.AppE
 
 	cache := cache.FromContext(c)
 
-	userID, _ := GetUserAuth(c)
+	userID, _ := auth.GetUser(c)
 
-	channelId, err := GetDefaultChannel(c, us.db, userID)
+	channelId, err := getDefaultChannel(c, us.db, userID)
 
 	if err != nil {
 		return nil, &types.AppError{Error: err, Code: http.StatusInternalServerError}
@@ -294,7 +295,7 @@ func (us *UserService) addBots(c context.Context, client *telegram.Client, userI
 
 	err := tgc.RunWithAuth(c, client, "", func(ctx context.Context) error {
 
-		channel, err := GetChannelById(ctx, client, channelId, strconv.FormatInt(userId, 10))
+		channel, err := tgc.GetChannelById(ctx, client.API(), channelId)
 
 		if err != nil {
 			logger.Error("error", zap.Error(err))
@@ -309,7 +310,7 @@ func (us *UserService) addBots(c context.Context, client *telegram.Client, userI
 			waitChan <- struct{}{}
 			wg.Add(1)
 			go func(t string) {
-				info, err := getBotInfo(c, us.kv, &us.cnf.TG, t)
+				info, err := tgc.GetBotInfo(c, client, t)
 				if err != nil {
 					return
 				}

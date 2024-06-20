@@ -3,11 +3,11 @@ package controller
 import (
 	"net/http"
 
+	"github.com/divyam234/teldrive/internal/auth"
 	"github.com/divyam234/teldrive/internal/cache"
 	"github.com/divyam234/teldrive/internal/logging"
 	"github.com/divyam234/teldrive/pkg/httputil"
 	"github.com/divyam234/teldrive/pkg/schemas"
-	"github.com/divyam234/teldrive/pkg/services"
 	"github.com/gin-gonic/gin"
 )
 
@@ -23,7 +23,7 @@ func (fc *Controller) CreateFile(c *gin.Context) {
 		return
 	}
 
-	userId, _ := services.GetUserAuth(c)
+	userId, _ := auth.GetUser(c)
 
 	res, err := fc.FileService.CreateFile(c, userId, &fileIn)
 	if err != nil {
@@ -36,7 +36,7 @@ func (fc *Controller) CreateFile(c *gin.Context) {
 
 func (fc *Controller) UpdateFile(c *gin.Context) {
 
-	userId, _ := services.GetUserAuth(c)
+	userId, _ := auth.GetUser(c)
 
 	var fileUpdate schemas.FileUpdate
 
@@ -65,7 +65,7 @@ func (fc *Controller) GetFileByID(c *gin.Context) {
 
 func (fc *Controller) ListFiles(c *gin.Context) {
 
-	userId, _ := services.GetUserAuth(c)
+	userId, _ := auth.GetUser(c)
 
 	fquery := schemas.FileQuery{
 		PerPage: 500,
@@ -90,7 +90,7 @@ func (fc *Controller) ListFiles(c *gin.Context) {
 
 func (fc *Controller) MakeDirectory(c *gin.Context) {
 
-	userId, _ := services.GetUserAuth(c)
+	userId, _ := auth.GetUser(c)
 
 	var payload schemas.MkDir
 	if err := c.ShouldBindJSON(&payload); err != nil {
@@ -118,7 +118,7 @@ func (fc *Controller) CopyFile(c *gin.Context) {
 
 func (fc *Controller) MoveFiles(c *gin.Context) {
 
-	userId, _ := services.GetUserAuth(c)
+	userId, _ := auth.GetUser(c)
 
 	var payload schemas.FileOperation
 	if err := c.ShouldBindJSON(&payload); err != nil {
@@ -136,7 +136,7 @@ func (fc *Controller) MoveFiles(c *gin.Context) {
 
 func (fc *Controller) DeleteFiles(c *gin.Context) {
 
-	userId, _ := services.GetUserAuth(c)
+	userId, _ := auth.GetUser(c)
 
 	var payload schemas.DeleteOperation
 	if err := c.ShouldBindJSON(&payload); err != nil {
@@ -164,7 +164,7 @@ func (fc *Controller) DeleteFileParts(c *gin.Context) {
 }
 
 func (fc *Controller) MoveDirectory(c *gin.Context) {
-	userId, _ := services.GetUserAuth(c)
+	userId, _ := auth.GetUser(c)
 
 	var payload schemas.DirMove
 	if err := c.ShouldBindJSON(&payload); err != nil {
@@ -181,7 +181,7 @@ func (fc *Controller) MoveDirectory(c *gin.Context) {
 }
 
 func (fc *Controller) GetCategoryStats(c *gin.Context) {
-	userId, _ := services.GetUserAuth(c)
+	userId, _ := auth.GetUser(c)
 
 	res, err := fc.FileService.GetCategoryStats(userId)
 	if err != nil {

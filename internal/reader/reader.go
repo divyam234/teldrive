@@ -3,10 +3,12 @@ package reader
 import (
 	"context"
 	"io"
+	"runtime"
 
 	"github.com/divyam234/teldrive/internal/config"
 	"github.com/divyam234/teldrive/internal/tgc"
 	"github.com/divyam234/teldrive/pkg/types"
+	"github.com/gotd/td/tg"
 )
 
 func calculatePartByteRanges(startByte, endByte, partSize int64) []types.Range {
@@ -47,6 +49,7 @@ type linearReader struct {
 	config    *config.TGConfig
 	channelId int64
 	worker    *tgc.StreamWorker
+	client    *tg.Client
 	fileId    string
 }
 
@@ -56,6 +59,7 @@ func NewLinearReader(ctx context.Context,
 	start, end int64,
 	channelId int64,
 	config *config.TGConfig,
+	client *tg.Client,
 	worker *tgc.StreamWorker,
 ) (reader io.ReadCloser, err error) {
 
@@ -65,6 +69,7 @@ func NewLinearReader(ctx context.Context,
 		limit:     end - start + 1,
 		ranges:    calculatePartByteRanges(start, end, parts[0].Size),
 		config:    config,
+		client:    client,
 		worker:    worker,
 		channelId: channelId,
 		fileId:    fileId,
@@ -114,10 +119,19 @@ func (r *linearReader) Read(p []byte) (n int, err error) {
 
 func (r *linearReader) nextPart() (io.ReadCloser, error) {
 
-	startByte := r.ranges[r.pos].Start
-	endByte := r.ranges[r.pos].End
-	return newTGReader(r.ctx, r.fileId, r.parts[r.ranges[r.pos].PartNo].ID,
-		startByte, endByte, r.config.BgBotsLimit, r.channelId, r.worker)
+	start := r.ranges[r.pos].Start
+	end := r.ranges[r.pos].End
+	if r.config.Stream.MultiThreads != 0 {
+		threads := r.config.Stream.MultiThreads
+		if threads == -1 {
+			threads = runtime.NumCPU()
+		}
+		return newThreadedTGReader(r.ctx, r.fileId, r.parts[r.ranges[r.pos].PartNo].ID,
+			start, end, threads, r.config.Stream.Buffers, r.channelId, r.worker)
+	} else {
+		return newTGReader(r.ctx, r.client, r.parts[r.ranges[r.pos].PartNo].Location, start, end)
+
+	}
 
 }
 

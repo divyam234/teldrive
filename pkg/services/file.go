@@ -2,7 +2,9 @@ package services
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"mime"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/WinterYukky/gorm-extra-clause-plugin/exclause"
+	"github.com/divyam234/teldrive/internal/auth"
 	"github.com/divyam234/teldrive/internal/cache"
 	"github.com/divyam234/teldrive/internal/category"
 	"github.com/divyam234/teldrive/internal/config"
@@ -34,6 +37,36 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+type buffer struct {
+	Buf []byte
+}
+
+func (b *buffer) long() (int64, error) {
+	v, err := b.uint64()
+	if err != nil {
+		return 0, err
+	}
+	return int64(v), nil
+}
+func (b *buffer) uint64() (uint64, error) {
+	const size = 8
+	if len(b.Buf) < size {
+		return 0, io.ErrUnexpectedEOF
+	}
+	v := binary.LittleEndian.Uint64(b.Buf)
+	b.Buf = b.Buf[size:]
+	return v, nil
+}
+
+func randInt64() (int64, error) {
+	var buf [8]byte
+	if _, err := io.ReadFull(rand.Reader, buf[:]); err != nil {
+		return 0, err
+	}
+	b := &buffer{Buf: buf[:]}
+	return b.long()
+}
 
 type FileService struct {
 	db     *gorm.DB
@@ -75,7 +108,7 @@ func (fs *FileService) CreateFile(c *gin.Context, userId int64, fileIn *schemas.
 		channelId := fileIn.ChannelID
 		if fileIn.ChannelID == 0 {
 			var err error
-			channelId, err = GetDefaultChannel(c, fs.db, userId)
+			channelId, err = getDefaultChannel(c, fs.db, userId)
 			if err != nil {
 				return nil, &types.AppError{Error: err, Code: http.StatusNotFound}
 			}
@@ -332,7 +365,9 @@ func (fs *FileService) DeleteFileParts(c *gin.Context, id string) (*schemas.Mess
 		return nil, &types.AppError{Error: err}
 	}
 
-	userId, session := GetUserAuth(c)
+	_, session := auth.GetUser(c)
+
+	client, _ := tgc.AuthClient(c, fs.cnf, session)
 
 	ids := []int{}
 
@@ -340,7 +375,7 @@ func (fs *FileService) DeleteFileParts(c *gin.Context, id string) (*schemas.Mess
 		ids = append(ids, int(part.ID))
 	}
 
-	err := DeleteTGMessages(c, fs.cnf, session, *file.ChannelID, userId, ids)
+	err := tgc.DeleteMessages(c, client, *file.ChannelID, ids)
 
 	if err != nil {
 		return nil, &types.AppError{Error: err}
@@ -380,7 +415,7 @@ func (fs *FileService) CopyFile(c *gin.Context) (*schemas.FileOut, *types.AppErr
 		return nil, &types.AppError{Error: err, Code: http.StatusBadRequest}
 	}
 
-	userId, session := GetUserAuth(c)
+	userId, session := auth.GetUser(c)
 
 	client, _ := tgc.AuthClient(c, fs.cnf, session)
 
@@ -394,20 +429,24 @@ func (fs *FileService) CopyFile(c *gin.Context) (*schemas.FileOut, *types.AppErr
 
 	newIds := []schemas.Part{}
 
-	channelId, err := GetDefaultChannel(c, fs.db, userId)
+	channelId, err := getDefaultChannel(c, fs.db, userId)
 	if err != nil {
 		return nil, &types.AppError{Error: err}
 	}
 
 	err = tgc.RunWithAuth(c, client, "", func(ctx context.Context) error {
-		user := strconv.FormatInt(userId, 10)
-		messages, err := getTGMessages(c, client, file.Parts, file.ChannelID, user)
+		ids := []int{}
+
+		for _, part := range file.Parts {
+			ids = append(ids, int(part.ID))
+		}
+		messages, err := tgc.GetMessages(c, client.API(), ids, file.ChannelID)
 
 		if err != nil {
 			return err
 		}
 
-		channel, err := GetChannelById(ctx, client, channelId, user)
+		channel, err := tgc.GetChannelById(ctx, client.API(), channelId)
 
 		if err != nil {
 			return err
@@ -617,9 +656,6 @@ func (fs *FileService) GetFileStream(c *gin.Context) {
 		}
 		channelUser = strconv.FormatInt(session.UserId, 10)
 
-		logger.Debugw("requesting file", "name", file.Name, "bot", channelUser, "user", channelUser, "start", start,
-			"end", end, "fileSize", file.Size)
-
 	} else {
 
 		limit := min(len(tokens), fs.cnf.BgBotsLimit)
@@ -634,14 +670,17 @@ func (fs *FileService) GetFileStream(c *gin.Context) {
 	}
 
 	if r.Method != "HEAD" {
-		parts, err := getParts(c, client.Tg, file, channelUser)
+		parts, err := getParts(c, client.Tg.API(), file, channelUser)
 		if err != nil {
 			logger.Error("file stream", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-
-		lr, err = reader.NewLinearReader(c, file.Id, parts, start, end, file.ChannelID, fs.cnf, fs.worker)
+		if file.Encrypted {
+			lr, err = reader.NewDecryptedReader(c, file.Id, parts, start, end, file.ChannelID, fs.cnf, client.Tg.API(), fs.worker)
+		} else {
+			lr, err = reader.NewLinearReader(c, file.Id, parts, start, end, file.ChannelID, fs.cnf, client.Tg.API(), fs.worker)
+		}
 
 		if err != nil {
 			logger.Error("file stream", err)

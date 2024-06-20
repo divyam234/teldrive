@@ -2,8 +2,10 @@ package auth
 
 import (
 	"encoding/json"
+	"strconv"
 
 	"github.com/divyam234/teldrive/pkg/types"
+	"github.com/gin-gonic/gin"
 	"github.com/go-jose/go-jose/v3"
 )
 
@@ -58,4 +60,11 @@ func Decode(secret string, token string) (*types.JWTClaims, error) {
 
 	return jwtToken, nil
 
+}
+
+func GetUser(c *gin.Context) (int64, string) {
+	val, _ := c.Get("jwtUser")
+	jwtUser := val.(*types.JWTClaims)
+	userId, _ := strconv.ParseInt(jwtUser.Subject, 10, 64)
+	return userId, jwtUser.TgSession
 }

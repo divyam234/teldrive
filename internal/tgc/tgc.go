@@ -56,7 +56,7 @@ func New(ctx context.Context, config *config.TGConfig, handler telegram.UpdateHa
 		},
 		SessionStorage: storage,
 		RetryInterval:  2 * time.Second,
-		MaxRetries:     500,
+		MaxRetries:     10,
 		DialTimeout:    10 * time.Second,
 		Middlewares:    middlewares,
 		UpdateHandler:  handler,

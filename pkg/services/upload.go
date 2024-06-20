@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/divyam234/teldrive/internal/auth"
 	"github.com/divyam234/teldrive/internal/crypt"
 	"github.com/divyam234/teldrive/internal/kv"
 	"github.com/divyam234/teldrive/internal/logging"
@@ -116,7 +117,7 @@ func (us *UploadService) UploadFile(c *gin.Context) (*schemas.UploadPartOut, *ty
 			Code: http.StatusBadRequest}
 	}
 
-	userId, session := GetUserAuth(c)
+	userId, session := auth.GetUser(c)
 
 	uploadId := c.Param("id")
 
@@ -127,7 +128,7 @@ func (us *UploadService) UploadFile(c *gin.Context) (*schemas.UploadPartOut, *ty
 	defer fileStream.Close()
 
 	if uploadQuery.ChannelID == 0 {
-		channelId, err = GetDefaultChannel(c, us.db, userId)
+		channelId, err = getDefaultChannel(c, us.db, userId)
 		if err != nil {
 			return nil, &types.AppError{Error: err}
 		}
@@ -174,7 +175,7 @@ func (us *UploadService) UploadFile(c *gin.Context) (*schemas.UploadPartOut, *ty
 
 	err = tgc.RunWithAuth(c, client, token, func(ctx context.Context) error {
 
-		channel, err := GetChannelById(ctx, client, channelId, channelUser)
+		channel, err := tgc.GetChannelById(ctx, client.API(), channelId)
 
 		if err != nil {
 			return err

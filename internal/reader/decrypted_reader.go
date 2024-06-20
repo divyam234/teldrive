@@ -3,31 +3,39 @@ package reader
 import (
 	"context"
 	"io"
+	"runtime"
 
 	"github.com/divyam234/teldrive/internal/config"
 	"github.com/divyam234/teldrive/internal/crypt"
+	"github.com/divyam234/teldrive/internal/tgc"
 	"github.com/divyam234/teldrive/pkg/types"
 	"github.com/gotd/td/tg"
 )
 
 type decrpytedReader struct {
-	ctx    context.Context
-	parts  []types.Part
-	ranges []types.Range
-	pos    int
-	client *tg.Client
-	reader io.ReadCloser
-	limit  int64
-	err    error
-	config *config.TGConfig
+	ctx       context.Context
+	parts     []types.Part
+	ranges    []types.Range
+	pos       int
+	reader    io.ReadCloser
+	limit     int64
+	err       error
+	config    *config.TGConfig
+	channelId int64
+	worker    *tgc.StreamWorker
+	client    *tg.Client
+	fileId    string
 }
 
 func NewDecryptedReader(
 	ctx context.Context,
-	client *tg.Client,
+	fileId string,
 	parts []types.Part,
 	start, end int64,
-	config *config.TGConfig) (io.ReadCloser, error) {
+	channelId int64,
+	config *config.TGConfig,
+	client *tg.Client,
+	worker *tgc.StreamWorker) (io.ReadCloser, error) {
 
 	r := &decrpytedReader{
 		ctx:    ctx,
@@ -68,6 +76,9 @@ func (r *decrpytedReader) Read(p []byte) (n int, err error) {
 	if err == io.EOF {
 		if r.limit > 0 {
 			err = nil
+			if r.reader != nil {
+				r.reader.Close()
+			}
 		}
 		r.pos++
 		if r.pos < len(r.ranges) {
@@ -89,7 +100,6 @@ func (r *decrpytedReader) Close() (err error) {
 
 func (r *decrpytedReader) nextPart() (io.ReadCloser, error) {
 
-	//location := r.parts[r.ranges[r.pos].PartNo].Location
 	start := r.ranges[r.pos].Start
 	end := r.ranges[r.pos].End
 	salt := r.parts[r.ranges[r.pos].PartNo].Salt
@@ -99,14 +109,22 @@ func (r *decrpytedReader) nextPart() (io.ReadCloser, error) {
 		func(ctx context.Context,
 			underlyingOffset,
 			underlyingLimit int64) (io.ReadCloser, error) {
-
-			//var end int64
+			var end int64
 
 			if underlyingLimit >= 0 {
 				end = min(r.parts[r.ranges[r.pos].PartNo].Size-1, underlyingOffset+underlyingLimit-1)
 			}
-			return nil, nil
-			//return newTGReader(r.ctx, r.client, location, underlyingOffset, end, 16)
+			if r.config.Stream.MultiThreads != 0 {
+				threads := r.config.Stream.MultiThreads
+				if threads == -1 {
+					threads = runtime.NumCPU()
+				}
+				return newThreadedTGReader(r.ctx, r.fileId, r.parts[r.ranges[r.pos].PartNo].ID,
+					start, end, threads, r.config.Stream.MultiThreads, r.channelId, r.worker)
+			} else {
+				return newTGReader(r.ctx, r.client, r.parts[r.ranges[r.pos].PartNo].Location, start, end)
+
+			}
 
 		}, start, end-start+1)
 

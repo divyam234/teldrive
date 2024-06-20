@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/divyam234/teldrive/internal/auth"
 	"github.com/divyam234/teldrive/pkg/httputil"
-	"github.com/divyam234/teldrive/pkg/services"
 	"github.com/gin-gonic/gin"
 )
 
@@ -40,7 +40,7 @@ func (uc *Controller) UploadFile(c *gin.Context) {
 }
 
 func (uc *Controller) UploadStats(c *gin.Context) {
-	userId, _ := services.GetUserAuth(c)
+	userId, _ := auth.GetUser(c)
 
 	days := 7
 

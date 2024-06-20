@@ -3,6 +3,7 @@ package types
 import (
 	"github.com/go-jose/go-jose/v3/jwt"
 	"github.com/gotd/td/session"
+	"github.com/gotd/td/tg"
 )
 
 type AppError struct {
@@ -15,6 +16,7 @@ type Part struct {
 	Size          int64
 	Salt          string
 	ID            int64
+	Location      *tg.InputDocumentFileLocation
 }
 
 type JWTClaims struct {

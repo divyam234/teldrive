@@ -43,8 +43,6 @@
     retention = "7d"
     threads = 8
   [tg.stream]
-    buffer-reader = false
-    buffers = 6
-    use-mmap = false
-    use-pooling= false
+    multi-threads = 0
+    buffers = 16
 

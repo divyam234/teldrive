@@ -42,6 +42,10 @@ type TGConfig struct {
 		MaxRetries    int
 		Retention     time.Duration
 	}
+	Stream struct {
+		MultiThreads int
+		Buffers      int
+	}
 }
 
 type LoggingConfig struct {

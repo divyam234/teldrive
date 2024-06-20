@@ -6,9 +6,9 @@ import (
 
 	"github.com/divyam234/teldrive/internal/config"
 	"github.com/divyam234/teldrive/internal/logging"
+	"github.com/divyam234/teldrive/internal/tgc"
 	"github.com/divyam234/teldrive/pkg/models"
 	"github.com/divyam234/teldrive/pkg/schemas"
-	"github.com/divyam234/teldrive/pkg/services"
 	"github.com/go-co-op/gocron"
 	"github.com/jackc/pgx/v5/pgtype"
 	"go.uber.org/zap"
@@ -87,7 +87,8 @@ func (c *CronService) CleanFiles(ctx context.Context) {
 			}
 
 		}
-		err := services.DeleteTGMessages(ctx, &c.cnf.TG, row.Session, row.ChannelId, row.UserId, ids)
+		client, _ := tgc.AuthClient(ctx, &c.cnf.TG, row.Session)
+		err := tgc.DeleteMessages(ctx, client, row.ChannelId, ids)
 
 		if err != nil {
 			c.logger.Errorw("failed to delete messages", err)
@@ -122,7 +123,9 @@ func (c *CronService) CleanUploads(ctx context.Context) {
 	for _, result := range upResults {
 
 		if result.Session != "" && len(result.Parts) > 0 {
-			err := services.DeleteTGMessages(ctx, &c.cnf.TG, result.Session, result.ChannelId, result.UserId, result.Parts)
+			client, _ := tgc.AuthClient(ctx, &c.cnf.TG, result.Session)
+
+			err := tgc.DeleteMessages(ctx, client, result.ChannelId, result.Parts)
 			if err != nil {
 				c.logger.Errorw("failed to delete messages", err)
 				return
