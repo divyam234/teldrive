@@ -103,7 +103,7 @@ func (r *threadedTgReader) Read(p []byte) (n int, err error) {
 			return 0, ErrorStreamAbandoned
 		case cur, ok := <-r.bufferChan:
 			if !ok {
-				return 0, io.EOF
+				return 0, ErrorStreamAbandoned
 			}
 			r.cur = cur
 		case <-r.ctx.Done():
