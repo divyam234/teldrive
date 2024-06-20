@@ -222,6 +222,7 @@ loop:
 			}
 
 			if err := g.Wait(); err != nil {
+				<-r.done
 				return err
 			}
 			for i := range r.concurrency {
