@@ -158,7 +158,6 @@ $ openssl rand -hex 32
 You can generate secret from [here](https://generate-secret.vercel.app/32).
 
 ## Important
-  - You can set up a local Postgres instance, but it's not recommended due to backup and data transfer hassles. The recommended approach is to use a free cloud-based Postgres DB like [Neon DB](https://neon.tech/).
   - Default Channel can be selected through UI. Make sure to set it from account settings on first login.
   - Multi Bots Mode is recommended to avoid flood errors and enable maximum download speed, especially if you are using downloaders like IDM and aria2c, which use multiple connections for downloads.
   - To enable multi bots, generate new bot tokens from BotFather and add them through UI on first login.
