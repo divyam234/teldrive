@@ -120,7 +120,7 @@ func (r *decrpytedReader) nextPart() (io.ReadCloser, error) {
 					threads = runtime.NumCPU()
 				}
 				return newThreadedTGReader(r.ctx, r.fileId, r.parts[r.ranges[r.pos].PartNo].ID,
-					start, end, threads, r.config.Stream.MultiThreads, r.channelId, r.worker)
+					start, end, threads, r.config.Stream.Buffers, r.channelId, r.worker)
 			} else {
 				return newTGReader(r.ctx, r.client, r.parts[r.ranges[r.pos].PartNo].Location, start, end)
 
