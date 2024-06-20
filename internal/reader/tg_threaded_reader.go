@@ -34,7 +34,6 @@ type threadedTgReader struct {
 	worker      *tgc.StreamWorker
 	fileId      string
 	partId      int64
-	closed      bool
 }
 
 func newThreadedTGReader(
@@ -44,8 +43,7 @@ func newThreadedTGReader(
 	start int64,
 	end int64,
 	concurrency int,
-	buffers int,
-	channelId int64,
+	buffers int, channelId int64,
 	worker *tgc.StreamWorker,
 
 ) (io.ReadCloser, error) {
@@ -81,6 +79,7 @@ func newThreadedTGReader(
 func (r *threadedTgReader) Close() error {
 	close(r.done)
 	r.wg.Wait()
+	close(r.bufferChan)
 	return nil
 }
 
@@ -96,12 +95,14 @@ func (r *threadedTgReader) Read(p []byte) (n int, err error) {
 		if r.cur != nil {
 			r.cur = nil
 		}
-		cur, ok := <-r.bufferChan
-		if !ok {
+		select {
+		case <-r.done:
 			return 0, ErrorStreamAbandoned
+		case cur := <-r.bufferChan:
+			r.cur = cur
+		case <-r.ctx.Done():
+			return 0, r.ctx.Err()
 		}
-		r.cur = cur
-
 	}
 
 	n = copy(p, r.cur.buffer())
@@ -125,6 +126,7 @@ func (r *threadedTgReader) chunk(ctx context.Context, offset int64, limit int64)
 
 	if err != nil {
 		channel, err := tgc.GetChannelById(ctx, client.Tg.API(), r.channelId)
+
 		if err != nil {
 			return nil, err
 		}
@@ -174,13 +176,32 @@ func (r *threadedTgReader) fillBuffer() error {
 
 	defer func() {
 		r.wg.Done()
-		if !r.closed {
-			close(r.bufferChan)
-		}
 		for i := range bufferMap {
 			delete(bufferMap, i)
 		}
 	}()
+
+	cb := func(ctx context.Context, i int) func() error {
+		return func() error {
+
+			chunk, err := r.chunk(ctx, r.offset+(int64(i)*r.chunkSize), r.chunkSize)
+			if err != nil {
+				return err
+			}
+			if r.totalParts == 1 {
+				chunk = chunk[r.leftCut:r.rightCut]
+			} else if r.currentPart+i+1 == 1 {
+				chunk = chunk[r.leftCut:]
+			} else if r.currentPart+i+1 == r.totalParts {
+				chunk = chunk[:r.rightCut]
+			}
+			buf := &buffer{buf: chunk}
+			mapMu.Lock()
+			bufferMap[i] = buf
+			mapMu.Unlock()
+			return nil
+		}
+	}
 
 loop:
 	for {
@@ -192,65 +213,37 @@ loop:
 		default:
 			g, ctx := errgroup.WithContext(r.ctx)
 
-			concurrency := min(r.concurrency, r.totalParts-r.currentPart)
+			threads := r.concurrency
 
-			g.SetLimit(concurrency)
+			g.SetLimit(8)
 
-			for i := range concurrency {
-				g.Go(func() error {
-					chunk, err := r.chunk(ctx, r.offset+(int64(i)*r.chunkSize), r.chunkSize)
-					if err != nil {
-						<-r.done
-						return err
-					}
-					if r.totalParts == 1 {
-						chunk = chunk[r.leftCut:r.rightCut]
-					} else if r.currentPart+i+1 == 1 {
-						chunk = chunk[r.leftCut:]
-					} else if r.currentPart+i+1 == r.totalParts {
-						chunk = chunk[:r.rightCut]
-					} else if len(chunk) == 0 {
-						<-r.done
-						return nil
-					}
-
-					buf := &buffer{buf: chunk}
-					mapMu.Lock()
-					bufferMap[i] = buf
-					mapMu.Unlock()
-					return nil
-				})
+			for i := range threads {
+				if r.currentPart+i+1 <= r.totalParts {
+					g.Go(cb(ctx, i))
+				}
 			}
 
 			if err := g.Wait(); err != nil {
-				if r.currentPart == 0 {
-					close(r.bufferChan)
-					r.closed = true
-					break loop
-				}
+				return err
 			}
-
-			var validChunks int
-
-			for i := range concurrency {
-				select {
-				case <-r.done:
-					break loop
-				case <-r.ctx.Done():
-					break loop
-				default:
-					val, ok := bufferMap[i]
-					if !ok {
-						break
+			for i := range threads {
+				if r.currentPart+i+1 <= r.totalParts {
+					select {
+					case <-r.done:
+						break loop
+					case <-r.ctx.Done():
+						break loop
+					case r.bufferChan <- bufferMap[i]:
 					}
-					r.bufferChan <- val
-					validChunks++
 				}
 			}
-			r.currentPart += validChunks
-			r.offset += r.chunkSize * int64(validChunks)
-			for i := range validChunks {
+			r.currentPart += threads
+			r.offset += r.chunkSize * int64(threads)
+			for i := range bufferMap {
 				delete(bufferMap, i)
+			}
+			if r.currentPart >= r.totalParts {
+				break loop
 			}
 		}
 	}
