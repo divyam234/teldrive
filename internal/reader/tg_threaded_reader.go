@@ -80,7 +80,9 @@ func newThreadedTGReader(
 func (r *threadedTgReader) Close() error {
 	close(r.done)
 	r.wg.Wait()
-	close(r.bufferChan)
+	if len(r.bufferChan) > 0 {
+		close(r.bufferChan)
+	}
 	return nil
 }
 
