@@ -34,6 +34,7 @@ type threadedTgReader struct {
 	worker      *tgc.StreamWorker
 	fileId      string
 	partId      int64
+	closed      bool
 }
 
 func newThreadedTGReader(
@@ -80,9 +81,10 @@ func newThreadedTGReader(
 func (r *threadedTgReader) Close() error {
 	close(r.done)
 	r.wg.Wait()
-	if len(r.bufferChan) > 0 {
+	if !r.closed {
 		close(r.bufferChan)
 	}
+
 	return nil
 }
 
@@ -224,6 +226,7 @@ loop:
 			if err := g.Wait(); err != nil {
 				if r.currentPart == 0 {
 					close(r.bufferChan)
+					r.closed = true
 					break loop
 				}
 			}
