@@ -125,8 +125,10 @@ func (r *linearReader) nextPart() (io.ReadCloser, error) {
 		if threads == -1 {
 			threads = runtime.NumCPU()
 		}
-		return newThreadedTGReader(r.ctx, r.fileId, r.parts[r.ranges[r.pos].PartNo].ID,
-			start, end, threads, r.config.Stream.Buffers, r.channelId, r.worker)
+		chunkSrc := &chunkSource{channelId: r.channelId, worker: r.worker,
+			fileId: r.fileId, partId: r.parts[r.ranges[r.pos].PartNo].ID}
+		return newThreadedTGReader(r.ctx,
+			start, end, threads, r.config.Stream.Buffers, chunkSrc, r.config.Stream.ChunkTimeout)
 	} else {
 		return newTGReader(r.ctx, r.client, r.parts[r.ranges[r.pos].PartNo].Location, start, end)
 

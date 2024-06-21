@@ -93,6 +93,7 @@ func NewRun() *cobra.Command {
 	duration.DurationVar(runCmd.Flags(), &config.TG.Uploads.Retention, "tg-uploads-retention", (24*7)*time.Hour, "Uploads retention duration")
 	runCmd.Flags().IntVar(&config.TG.Stream.MultiThreads, "tg-stream-multi-threads", 0, "Stream multi-threads")
 	runCmd.Flags().IntVar(&config.TG.Stream.Buffers, "tg-stream-buffers", 16, "No of Stream buffers")
+	duration.DurationVar(runCmd.Flags(), &config.TG.Stream.ChunkTimeout, "tg-stream-chunk-timeout", 30*time.Second, "Chunk Fetch Timeout")
 	runCmd.MarkFlagRequired("tg-app-id")
 	runCmd.MarkFlagRequired("tg-app-hash")
 	runCmd.MarkFlagRequired("db-data-source")
@@ -160,11 +161,11 @@ func initViperConfig(cmd *cobra.Command) error {
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 	viper.AutomaticEnv()
 	viper.ReadInConfig()
-	bindFlagsRecursive(cmd.Flags(), "", reflect.ValueOf(config.Config{}))
+	bindFlags(cmd.Flags(), "", reflect.ValueOf(config.Config{}))
 	return nil
 
 }
-func bindFlagsRecursive(flags *pflag.FlagSet, prefix string, v reflect.Value) {
+func bindFlags(flags *pflag.FlagSet, prefix string, v reflect.Value) {
 	t := v.Type()
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
@@ -173,7 +174,7 @@ func bindFlagsRecursive(flags *pflag.FlagSet, prefix string, v reflect.Value) {
 		field := t.Field(i)
 		switch field.Type.Kind() {
 		case reflect.Struct:
-			bindFlagsRecursive(flags, fmt.Sprintf("%s.%s", prefix, strings.ToLower(field.Name)), v.Field(i))
+			bindFlags(flags, fmt.Sprintf("%s.%s", prefix, strings.ToLower(field.Name)), v.Field(i))
 		default:
 			newPrefix := prefix[1:]
 			newName := modifyFlag(field.Name)

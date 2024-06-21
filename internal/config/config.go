@@ -45,6 +45,7 @@ type TGConfig struct {
 	Stream struct {
 		MultiThreads int
 		Buffers      int
+		ChunkTimeout time.Duration
 	}
 }
 
