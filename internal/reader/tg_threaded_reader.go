@@ -144,9 +144,6 @@ func newThreadedTGReader(
 
 func (r *threadedTgReader) Close() error {
 	close(r.done)
-	if !r.closed {
-		close(r.bufferChan)
-	}
 	return nil
 }
 
