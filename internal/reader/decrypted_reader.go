@@ -38,12 +38,15 @@ func NewDecryptedReader(
 	worker *tgc.StreamWorker) (io.ReadCloser, error) {
 
 	r := &decrpytedReader{
-		ctx:    ctx,
-		parts:  parts,
-		client: client,
-		limit:  end - start + 1,
-		ranges: calculatePartByteRanges(start, end, parts[0].DecryptedSize),
-		config: config,
+		ctx:       ctx,
+		parts:     parts,
+		limit:     end - start + 1,
+		ranges:    calculatePartByteRanges(start, end, parts[0].DecryptedSize),
+		config:    config,
+		client:    client,
+		worker:    worker,
+		channelId: channelId,
+		fileId:    fileId,
 	}
 	res, err := r.nextPart()
 
