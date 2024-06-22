@@ -624,7 +624,7 @@ func (fs *FileService) GetFileStream(c *gin.Context, download bool) {
 
 	disposition := "inline"
 
-	if c.Query("d") == "1" {
+	if download {
 		disposition = "attachment"
 	}
 
