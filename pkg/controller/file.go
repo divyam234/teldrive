@@ -193,5 +193,9 @@ func (fc *Controller) GetCategoryStats(c *gin.Context) {
 }
 
 func (fc *Controller) GetFileStream(c *gin.Context) {
-	fc.FileService.GetFileStream(c)
+	fc.FileService.GetFileStream(c, false)
+}
+
+func (fc *Controller) GetFileDownload(c *gin.Context) {
+	fc.FileService.GetFileStream(c, true)
 }

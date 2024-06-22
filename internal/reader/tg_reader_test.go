@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/divyam234/teldrive/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 )
@@ -40,18 +41,25 @@ func (m *testChunkSourceTimeout) ChunkSize(start, end int64) int64 {
 
 type TestSuite struct {
 	suite.Suite
+	config *config.TGConfig
+}
+
+func (suite *TestSuite) SetupTest() {
+	suite.config = &config.TGConfig{Stream: struct {
+		MultiThreads int
+		Buffers      int
+		ChunkTimeout time.Duration
+	}{MultiThreads: 8, Buffers: 10, ChunkTimeout: 1 * time.Second}}
 }
 
 func (suite *TestSuite) TestFullRead() {
 	ctx := context.Background()
 	start := int64(0)
 	end := int64(99)
-	concurrency := 8
-	buffers := 10
 	data := make([]byte, 100)
 	rand.Read(data)
 	chunkSrc := &testChunkSource{buffer: data}
-	reader, err := newThreadedTGReader(ctx, start, end, concurrency, buffers, chunkSrc, time.Second)
+	reader, err := newTGReader(ctx, start, end, suite.config, chunkSrc)
 	assert.NoError(suite.T(), err)
 	test_data, err := io.ReadAll(reader)
 	assert.Equal(suite.T(), nil, err)
@@ -62,12 +70,10 @@ func (suite *TestSuite) TestPartialRead() {
 	ctx := context.Background()
 	start := int64(0)
 	end := int64(65)
-	concurrency := 8
-	buffers := 10
 	data := make([]byte, 100)
 	rand.Read(data)
 	chunkSrc := &testChunkSource{buffer: data}
-	reader, err := newThreadedTGReader(ctx, start, end, concurrency, buffers, chunkSrc, time.Second)
+	reader, err := newTGReader(ctx, start, end, suite.config, chunkSrc)
 	assert.NoError(suite.T(), err)
 	test_data, err := io.ReadAll(reader)
 	assert.NoError(suite.T(), err)
@@ -78,12 +84,10 @@ func (suite *TestSuite) TestTimeout() {
 	ctx := context.Background()
 	start := int64(0)
 	end := int64(65)
-	concurrency := 8
-	buffers := 10
 	data := make([]byte, 100)
 	rand.Read(data)
 	chunkSrc := &testChunkSourceTimeout{buffer: data}
-	reader, err := newThreadedTGReader(ctx, start, end, concurrency, buffers, chunkSrc, 1*time.Second)
+	reader, err := newTGReader(ctx, start, end, suite.config, chunkSrc)
 	assert.NoError(suite.T(), err)
 	test_data, err := io.ReadAll(reader)
 	assert.Greater(suite.T(), len(test_data), 0)
@@ -94,12 +98,10 @@ func (suite *TestSuite) TestClose() {
 	ctx := context.Background()
 	start := int64(0)
 	end := int64(65)
-	concurrency := 8
-	buffers := 10
 	data := make([]byte, 100)
 	rand.Read(data)
 	chunkSrc := &testChunkSource{buffer: data}
-	reader, err := newThreadedTGReader(ctx, start, end, concurrency, buffers, chunkSrc, time.Second)
+	reader, err := newTGReader(ctx, start, end, suite.config, chunkSrc)
 	assert.NoError(suite.T(), err)
 	_, err = io.ReadAll(reader)
 	assert.NoError(suite.T(), err)
@@ -110,12 +112,10 @@ func (suite *TestSuite) TestCancellation() {
 	ctx, cancel := context.WithCancel(context.Background())
 	start := int64(0)
 	end := int64(65)
-	concurrency := 8
-	buffers := 10
 	data := make([]byte, 100)
 	rand.Read(data)
 	chunkSrc := &testChunkSource{buffer: data}
-	reader, err := newThreadedTGReader(ctx, start, end, concurrency, buffers, chunkSrc, time.Second)
+	reader, err := newTGReader(ctx, start, end, suite.config, chunkSrc)
 	assert.NoError(suite.T(), err)
 	cancel()
 	_, err = io.ReadAll(reader)
@@ -124,15 +124,14 @@ func (suite *TestSuite) TestCancellation() {
 }
 
 func (suite *TestSuite) TestCancellationWithTimeout() {
-	ctx, _ := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	_ = cancel
 	start := int64(0)
 	end := int64(65)
-	concurrency := 8
-	buffers := 10
 	data := make([]byte, 100)
 	rand.Read(data)
 	chunkSrc := &testChunkSourceTimeout{buffer: data}
-	reader, err := newThreadedTGReader(ctx, start, end, concurrency, buffers, chunkSrc, time.Second)
+	reader, err := newTGReader(ctx, start, end, suite.config, chunkSrc)
 	assert.NoError(suite.T(), err)
 	_, err = io.ReadAll(reader)
 	assert.Equal(suite.T(), err, context.DeadlineExceeded)

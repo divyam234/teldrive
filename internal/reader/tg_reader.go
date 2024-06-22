@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/divyam234/teldrive/internal/cache"
+	"github.com/divyam234/teldrive/internal/config"
 	"github.com/divyam234/teldrive/internal/tgc"
 	"github.com/gotd/td/tg"
 	"golang.org/x/sync/errgroup"
@@ -22,73 +22,41 @@ type ChunkSource interface {
 }
 
 type chunkSource struct {
-	channelId int64
-	worker    *tgc.StreamWorker
-	fileId    string
-	partId    int64
+	channelId   int64
+	worker      *tgc.StreamWorker
+	fileId      string
+	partId      int64
+	concurrency int
+	client      *tgc.Client
 }
 
 func (c *chunkSource) ChunkSize(start, end int64) int64 {
-	return calculateChunkSize(start, end)
+	return tgc.CalculateChunkSize(start, end)
 }
 
 func (c *chunkSource) Chunk(ctx context.Context, offset int64, limit int64) ([]byte, error) {
+	var (
+		location *tg.InputDocumentFileLocation
+		err      error
+		client   *tgc.Client
+	)
 
-	cache := cache.FromContext(ctx)
+	client = c.client
 
-	var location *tg.InputDocumentFileLocation
-
-	client, _, _ := c.worker.Next(c.channelId)
-
-	key := fmt.Sprintf("location:%s:%s:%d", client.UserId, c.fileId, c.partId)
-
-	err := cache.Get(key, location)
-
-	if err != nil {
-		channel, err := tgc.GetChannelById(ctx, client.Tg.API(), c.channelId)
-
-		if err != nil {
-			return nil, err
-		}
-		messageRequest := tg.ChannelsGetMessagesRequest{
-			Channel: channel,
-			ID:      []tg.InputMessageClass{&tg.InputMessageID{ID: int(c.partId)}},
-		}
-
-		res, err := client.Tg.API().ChannelsGetMessages(ctx, &messageRequest)
-		if err != nil {
-			return nil, err
-		}
-		messages, _ := res.(*tg.MessagesChannelMessages)
-		item := messages.Messages[0].(*tg.Message)
-		media := item.Media.(*tg.MessageMediaDocument)
-		document := media.Document.(*tg.Document)
-		location = document.AsInputDocumentFileLocation()
-		cache.Set(key, location, 3600)
+	if c.concurrency > 0 {
+		client, _, _ = c.worker.Next(c.channelId)
 	}
-
-	req := &tg.UploadGetFileRequest{
-		Offset:   offset,
-		Limit:    int(limit),
-		Location: location,
-		Precise:  true,
-	}
-
-	res, err := client.Tg.API().UploadGetFile(ctx, req)
+	location, err = tgc.GetLocation(ctx, client, c.fileId, c.channelId, c.partId)
 
 	if err != nil {
 		return nil, err
 	}
 
-	switch result := res.(type) {
-	case *tg.UploadFile:
-		return result.Bytes, nil
-	default:
-		return nil, fmt.Errorf("unexpected type %T", c)
-	}
+	return tgc.GetChunk(ctx, client.Tg.API(), location, offset, limit)
+
 }
 
-type threadedTgReader struct {
+type tgReader struct {
 	ctx         context.Context
 	offset      int64
 	limit       int64
@@ -96,6 +64,7 @@ type threadedTgReader struct {
 	bufferChan  chan *buffer
 	done        chan struct{}
 	cur         *buffer
+	err         chan error
 	mu          sync.Mutex
 	concurrency int
 	leftCut     int64
@@ -103,53 +72,62 @@ type threadedTgReader struct {
 	totalParts  int
 	currentPart int
 	closed      bool
-	chunkSrc    ChunkSource
 	timeout     time.Duration
+	chunkSrc    ChunkSource
 }
 
-func newThreadedTGReader(
+func newTGReader(
 	ctx context.Context,
 	start int64,
 	end int64,
-	concurrency int,
-	buffers int,
+	config *config.TGConfig,
 	chunkSrc ChunkSource,
-	timeout time.Duration,
 
-) (*threadedTgReader, error) {
+) (*tgReader, error) {
 
 	chunkSize := chunkSrc.ChunkSize(start, end)
 
 	offset := start - (start % chunkSize)
 
-	r := &threadedTgReader{
+	r := &tgReader{
 		ctx:         ctx,
 		limit:       end - start + 1,
-		bufferChan:  make(chan *buffer, buffers),
-		concurrency: concurrency,
+		bufferChan:  make(chan *buffer, config.Stream.Buffers),
+		concurrency: config.Stream.MultiThreads,
 		leftCut:     start - offset,
 		rightCut:    (end % chunkSize) + 1,
 		totalParts:  int((end - offset + chunkSize) / chunkSize),
 		offset:      offset,
 		chunkSize:   chunkSize,
 		chunkSrc:    chunkSrc,
-		timeout:     timeout,
+		timeout:     config.Stream.ChunkTimeout,
 		done:        make(chan struct{}, 1),
+		err:         make(chan error, 1),
 	}
 
-	go r.fillBuffer()
+	if r.concurrency == 0 {
+		r.currentPart = 1
+		go r.fillBufferSequentially()
+	} else {
+		go r.fillBufferConcurrently()
+	}
 
 	return r, nil
 }
 
-func (r *threadedTgReader) Close() error {
+func (r *tgReader) Close() error {
 	close(r.done)
+	close(r.err)
 	return nil
 }
 
-func (r *threadedTgReader) Read(p []byte) (n int, err error) {
+func (r *tgReader) Read(p []byte) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	if r.limit <= 0 {
+		return 0, io.EOF
+	}
 
 	if r.cur.isEmpty() {
 		if r.cur != nil {
@@ -157,17 +135,20 @@ func (r *threadedTgReader) Read(p []byte) (n int, err error) {
 		}
 		select {
 		case cur, ok := <-r.bufferChan:
-			if !ok {
+			if !ok && r.limit > 0 {
 				return 0, ErrorStreamAbandoned
 			}
 			r.cur = cur
+
+		case err := <-r.err:
+			return 0, fmt.Errorf("error reading chunk: %w", err)
 		case <-r.ctx.Done():
 			return 0, r.ctx.Err()
 
 		}
 	}
 
-	n = copy(p, r.cur.buffer())
+	n := copy(p, r.cur.buffer())
 	r.cur.increment(n)
 	r.limit -= int64(n)
 
@@ -178,7 +159,7 @@ func (r *threadedTgReader) Read(p []byte) (n int, err error) {
 	return n, nil
 }
 
-func (r *threadedTgReader) fillBuffer() error {
+func (r *tgReader) fillBufferConcurrently() error {
 
 	var mapMu sync.Mutex
 
@@ -235,7 +216,8 @@ func (r *threadedTgReader) fillBuffer() error {
 		select {
 		case err := <-done:
 			if err != nil {
-				return err
+				r.err <- err
+				return nil
 			} else {
 				for i := range r.concurrency {
 					if r.currentPart+i+1 <= r.totalParts {
@@ -259,6 +241,49 @@ func (r *threadedTgReader) fillBuffer() error {
 			return r.ctx.Err()
 		}
 
+	}
+}
+
+func (r *tgReader) fillBufferSequentially() error {
+
+	defer close(r.bufferChan)
+
+	fetchChunk := func(ctx context.Context) (*buffer, error) {
+		chunk, err := r.chunkSrc.Chunk(ctx, r.offset, r.chunkSize)
+		if err != nil {
+			return nil, err
+		}
+		if r.totalParts == 1 {
+			chunk = chunk[r.leftCut:r.rightCut]
+		} else if r.currentPart == 1 {
+			chunk = chunk[r.leftCut:]
+		} else if r.currentPart == r.totalParts {
+			chunk = chunk[:r.rightCut]
+		}
+		return &buffer{buf: chunk}, nil
+	}
+
+	for {
+		select {
+		case <-r.done:
+			return nil
+		case <-r.ctx.Done():
+			return r.ctx.Err()
+		case <-time.After(r.timeout):
+			return nil
+		default:
+			buf, err := fetchChunk(r.ctx)
+			if err != nil {
+				r.err <- err
+				return nil
+			}
+			r.bufferChan <- buf
+			r.currentPart++
+			r.offset += r.chunkSize
+			if r.currentPart > r.totalParts {
+				return nil
+			}
+		}
 	}
 }
 

@@ -521,7 +521,7 @@ func (fs *FileService) CopyFile(c *gin.Context) (*schemas.FileOut, *types.AppErr
 	return mapper.ToFileOut(dbFile), nil
 }
 
-func (fs *FileService) GetFileStream(c *gin.Context) {
+func (fs *FileService) GetFileStream(c *gin.Context, download bool) {
 
 	w := c.Writer
 
@@ -640,14 +640,15 @@ func (fs *FileService) GetFileStream(c *gin.Context) {
 	}
 
 	var (
-		channelUser string
-		lr          io.ReadCloser
+		channelUser  string
+		lr           io.ReadCloser
+		client       *tgc.Client
+		multiThreads int
 	)
 
-	var client *tgc.Client
+	multiThreads = fs.cnf.Stream.MultiThreads
 
 	if fs.cnf.DisableStreamBots || len(tokens) == 0 {
-
 		client, err = fs.worker.UserWorker(session.Session, session.UserId)
 		if err != nil {
 			logger.Error("file stream", zap.Error(err))
@@ -655,6 +656,7 @@ func (fs *FileService) GetFileStream(c *gin.Context) {
 			return
 		}
 		channelUser = strconv.FormatInt(session.UserId, 10)
+		multiThreads = 0
 
 	} else {
 
@@ -676,10 +678,14 @@ func (fs *FileService) GetFileStream(c *gin.Context) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+
+		if download {
+			multiThreads = 0
+		}
 		if file.Encrypted {
-			lr, err = reader.NewDecryptedReader(c, file.Id, parts, start, end, file.ChannelID, fs.cnf, client.Tg.API(), fs.worker)
+			lr, err = reader.NewDecryptedReader(c, file.Id, parts, start, end, file.ChannelID, fs.cnf, multiThreads, client, fs.worker)
 		} else {
-			lr, err = reader.NewLinearReader(c, file.Id, parts, start, end, file.ChannelID, fs.cnf, client.Tg.API(), fs.worker)
+			lr, err = reader.NewLinearReader(c, file.Id, parts, start, end, file.ChannelID, fs.cnf, multiThreads, client, fs.worker)
 		}
 
 		if err != nil {

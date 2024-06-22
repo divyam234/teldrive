@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/divyam234/teldrive/internal/cache"
 	"github.com/divyam234/teldrive/pkg/types"
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/tg"
@@ -142,11 +143,12 @@ func GetMessages(ctx context.Context, client *tg.Client, ids []int, channelId in
 	return allMessages, nil
 }
 
-func getChunk(ctx context.Context, client *tg.Client, location tg.InputFileLocationClass, offset int64, limit int64) ([]byte, error) {
+func GetChunk(ctx context.Context, client *tg.Client, location tg.InputFileLocationClass, offset int64, limit int64) ([]byte, error) {
 	req := &tg.UploadGetFileRequest{
 		Offset:   offset,
 		Limit:    int(limit),
 		Location: location,
+		Precise:  true,
 	}
 
 	r, err := client.UploadGetFile(ctx, req)
@@ -168,7 +170,7 @@ func GetMediaContent(ctx context.Context, client *tg.Client, location tg.InputFi
 	limit := int64(1024 * 1024)
 	buff := &bytes.Buffer{}
 	for {
-		r, err := getChunk(ctx, client, location, offset, limit)
+		r, err := GetChunk(ctx, client, location, offset, limit)
 		if err != nil {
 			return buff, err
 		}
@@ -192,4 +194,46 @@ func GetBotInfo(ctx context.Context, client *telegram.Client, token string) (*ty
 		return nil, err
 	}
 	return &types.BotInfo{Id: user.ID, UserName: user.Username, Token: token}, nil
+}
+
+func GetLocation(ctx context.Context, client *Client, fileId string, channelId int64, partId int64) (location *tg.InputDocumentFileLocation, err error) {
+
+	cache := cache.FromContext(ctx)
+
+	key := fmt.Sprintf("location:%s:%s:%d", client.UserId, fileId, partId)
+
+	err = cache.Get(key, location)
+
+	if err != nil {
+		channel, err := GetChannelById(ctx, client.Tg.API(), channelId)
+
+		if err != nil {
+			return nil, err
+		}
+		messageRequest := tg.ChannelsGetMessagesRequest{
+			Channel: channel,
+			ID:      []tg.InputMessageClass{&tg.InputMessageID{ID: int(partId)}},
+		}
+
+		res, err := client.Tg.API().ChannelsGetMessages(ctx, &messageRequest)
+		if err != nil {
+			return nil, err
+		}
+		messages, _ := res.(*tg.MessagesChannelMessages)
+		item := messages.Messages[0].(*tg.Message)
+		media := item.Media.(*tg.MessageMediaDocument)
+		document := media.Document.(*tg.Document)
+		location = document.AsInputDocumentFileLocation()
+		cache.Set(key, location, 3600)
+	}
+	return location, nil
+}
+
+func CalculateChunkSize(start, end int64) int64 {
+	chunkSize := int64(1024 * 1024)
+
+	for chunkSize > 1024 && chunkSize > (end-start) {
+		chunkSize /= 2
+	}
+	return chunkSize
 }

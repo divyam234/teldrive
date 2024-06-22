@@ -41,13 +41,11 @@ func getParts(ctx context.Context, client *tg.Client, file *schemas.FileOutFull,
 		item := message.(*tg.Message)
 		media := item.Media.(*tg.MessageMediaDocument)
 		document := media.Document.(*tg.Document)
-		location := document.AsInputDocumentFileLocation()
 
 		part := types.Part{
-			ID:       file.Parts[i].ID,
-			Size:     document.Size,
-			Salt:     file.Parts[i].Salt,
-			Location: location,
+			ID:   file.Parts[i].ID,
+			Size: document.Size,
+			Salt: file.Parts[i].Salt,
 		}
 		if file.Encrypted {
 			part.DecryptedSize, _ = crypt.DecryptedSize(document.Size)
